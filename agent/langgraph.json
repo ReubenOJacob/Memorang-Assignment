@@ -1,0 +1,7 @@
+{
+  "node_version": "20",
+  "graphs": {
+    "lesson_agent": "./src/graph.ts:graph"
+  },
+  "env": "../.env"
+}

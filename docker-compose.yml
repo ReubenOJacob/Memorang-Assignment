@@ -1,0 +1,23 @@
+# Postgres for the LangGraph checkpointer (durable HITL) + the attempts ledger.
+# Only needed when USE_MEMORY_SAVER=false. To run without Docker, set
+# USE_MEMORY_SAVER=true in .env and skip `docker compose up`.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pdf-lesson-postgres
+    environment:
+      POSTGRES_USER: lesson
+      POSTGRES_PASSWORD: lesson
+      POSTGRES_DB: lesson
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lesson -d lesson"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata: {}

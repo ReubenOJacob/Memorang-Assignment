@@ -1,0 +1,284 @@
+# PDF → Interactive Lesson Agent
+
+Turn any PDF into an interactive, AI-tutored lesson. The agent reads your document,
+proposes a lesson plan **for you to approve** (human-in-the-loop), then runs an MCQ
+quiz loop with green/red feedback, non-revealing hints, a Socratic "teach me this"
+tutor, and a personalized performance summary at the end.
+
+Built with **LangGraph.js** (agent state machine + durable HITL interrupts),
+**CopilotKit CoAgents** (generative UI + shared state), **Next.js 15**, and
+**PostgreSQL** (optional — there's a zero-Docker fallback).
+
+---
+
+## Table of contents
+- [Architecture](#architecture)
+- [The learning flow](#the-learning-flow)
+- [Quick start](#quick-start)
+- [Environment variables](#environment-variables)
+- [Running without Docker](#running-without-docker)
+- [How it works (design notes)](#how-it-works-design-notes)
+- [Acceptance criteria mapping](#acceptance-criteria-mapping)
+- [Project layout](#project-layout)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations & future work](#known-limitations--future-work)
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Browser["Browser — React 19 UI"]
+    UP[PdfDropzone]
+    CHAT[CopilotChat]
+    MCQ[McqWidget]
+    PROG[LessonPlanCard · ProgressBar · SummaryReport]
+  end
+
+  subgraph API["Next.js API routes (:3000)"]
+    UPL["/api/upload · unpdf → text"]
+    SEED["/api/seed · seed thread state"]
+    GRADE["/api/grade · authoritative grade"]
+    TUTOR["/api/tutor · Socratic hint"]
+    CPK["/api/copilotkit · CopilotRuntime → LangGraphAgent"]
+  end
+
+  subgraph Agent["LangGraph.js dev server (:8123)"]
+    P[plan] --> A[approval]
+    A -->|approve| G[generate_mcqs] --> Q[quiz]
+    A -->|revise| P
+    Q -->|next question| Q
+    Q -->|objective done| G
+    Q -->|all done| S[summarize]
+  end
+
+  DB[(Postgres · attempts ledger)]
+  LLM[OpenAI / Anthropic]
+
+  UP --> UPL
+  MCQ -->|Submit / Hint| GRADE
+  MCQ -->|Teach me this| TUTOR
+  Browser <-->|CopilotKit protocol| CPK
+  CPK <-->|AG-UI| Agent
+  GRADE -.reads answer key.-> Agent
+  TUTOR -.reads question.-> Agent
+  SEED -.seeds document.-> Agent
+  Agent <--> LLM
+  Agent <--> DB
+```
+
+Two processes in development:
+1. **`agent/`** — the LangGraph.js graph (`plan → approval → generate_mcqs → quiz → summarize`), served by `langgraphjs dev` on port **8123**.
+2. **`web/`** — the Next.js app: the UI, the CopilotKit runtime route, and the grade/tutor/seed/upload API routes, on port **3000**.
+
+> **Why grade & tutor are REST routes, not graph nodes.** An earlier design routed hints and grading back through the graph as extra nodes. That forced the whole quiz card to re-render on every hint or wrong answer (a full agent round-trip). The current design resolves each quiz **interrupt exactly once** — on *Next question* — and handles grading/tutoring as stateless REST calls that read the thread's answer key server-side. Feedback pops in beneath the question with zero re-render, while the graph stays the durable, checkpointed source of truth.
+
+---
+
+## The learning flow
+
+1. **Upload** — you drop a PDF. It's parsed **server-side** (`/api/upload`, `unpdf`),
+   and the text is seeded into shared agent state.
+2. **Plan** — the `plan` node drafts a lesson plan (title, difficulty, 3–5 ordered
+   objectives) via schema-validated structured output.
+3. **Approve (HITL)** — the graph **interrupts** and shows you the plan. You **Approve
+   & Start** or **Request changes** (which regenerates the plan with your feedback).
+4. **Quiz loop** — for each objective the `generate_mcqs` node writes 2–3 grounded
+   MCQs. Each question is its own **interrupt**:
+   - **Correct** → the choice/panel turns **green**, an explanation appears, next question.
+   - **Incorrect** → **red** highlight + a **non-revealing hint**, retry with no penalty.
+   - **💡 Hint** / **📚 Teach me this** → a Socratic tutor teaches the concept from the
+     source material **without giving away the answer**, then nudges you back.
+5. **Summary** — the `summarize` node computes stats deterministically and the LLM turns
+   them into a headline, per-objective breakdown, and **3 personalized study tips**.
+
+---
+
+## Quick start
+
+**Prerequisites:** Node 20+ (tested on 24), npm, an **OpenAI** (or Anthropic) API key,
+and optionally Docker.
+
+```bash
+# 1. Configure
+cp .env.example .env
+#   edit .env → add OPENAI_API_KEY   (keep USE_MEMORY_SAVER=true for the no-Docker path)
+
+# 2. (Optional) Postgres for durable persistence + attempts ledger
+docker compose up -d
+#   ...and set USE_MEMORY_SAVER=false in .env
+
+# 3. Agent — terminal 1
+cd agent && npm install && npm run dev        # LangGraph dev server on :8123
+
+# 4. Web — terminal 2
+cd web && npm install && npm run dev          # Next.js on :3000
+
+# 5. Open the app and upload the sample
+open http://localhost:3000
+#   sample PDF: samples/photosynthesis.pdf
+```
+
+> The sample PDF is generated by `node samples/make-sample.mjs` (already committed as
+> `samples/photosynthesis.pdf`). It's a 3-page, 2–3-objective document sized for a
+> sub-5-minute demo.
+
+---
+
+## Environment variables
+
+| Var | Default | Meaning |
+|---|---|---|
+| `MODEL_PROVIDER` | `openai` | `openai` or `anthropic` |
+| `OPENAI_API_KEY` | — | required when provider is openai (default) |
+| `OPENAI_MODEL` | `gpt-4o` | model id |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | — / `claude-sonnet-5` | used when provider is anthropic |
+| `USE_MEMORY_SAVER` | `true` | `true` = no Docker (in-memory); `false` = use Postgres |
+| `DATABASE_URL` | `postgresql://lesson:lesson@localhost:5432/lesson` | attempts ledger (when not in memory mode) |
+| `LANGGRAPH_URL` | `http://localhost:8123` | where the web runtime reaches the agent |
+| `LANGGRAPH_AGENT_ID` | `lesson_agent` | must match `agent/langgraph.json` and the `<CopilotKit agent>` prop |
+| `LANGSMITH_API_KEY` | — | optional tracing |
+
+---
+
+## Running without Docker
+
+Set `USE_MEMORY_SAVER=true` (the default). Then:
+- The LangGraph **dev server** provides an in-memory checkpointer/thread store, so HITL
+  interrupts and resume still work **within a running session**.
+- The Postgres **attempts ledger** is skipped; the in-state attempts copy fully powers
+  the summary. Nothing else changes.
+
+Trade-off: durability across **server restarts** requires Postgres
+(`USE_MEMORY_SAVER=false` + `docker compose up -d`).
+
+---
+
+## How it works (design notes)
+
+- **Two HITL interrupts, resolved once each.** Plan approval and *every quiz question*
+  use LangGraph's dynamic `interrupt()`, matched on the client by CopilotKit's
+  `useLangGraphInterrupt`. Interrupts are checkpointed, so a refresh mid-lesson resumes
+  exactly where you were (thread id persisted in `localStorage`). The quiz interrupt
+  resolves a single time — on *Next question* — carrying the interaction history
+  (`{ choiceId, wrongAttempts, hintKinds }`), which the `quiz` node **re-grades
+  authoritatively** (client input is never trusted) before writing the ledgers.
+- **Anti-cheat by construction — three channels, all closed.** The answer key must never
+  reach the browser before a question is earned:
+  1. **Interrupt payload** — carries only a **safe subset** of each MCQ (`toSafeMcq`: no
+     `correctChoiceId`, no `explanation`).
+  2. **State sync** — CopilotKit mirrors graph *state* to the client, so the graph is
+     compiled with a narrow **output schema** (`LessonStateOutput`) that omits `questions`
+     and `pdfText`; the snapshot channel physically cannot carry the key.
+  3. **Token stream** — the internal plan/MCQ/summary LLM calls run with
+     `emit-messages`/`emit-tool-calls` **disabled** (`SILENT` in `model.ts`), so
+     structured-output tokens — which contain the answers — never stream into the chat.
+
+  Grading itself is a pure-TS equality check performed **server-side** (`/api/grade`
+  reads the key from thread state, for the *current* question only), and the correct
+  choice is revealed only **after** a correct answer.
+- **Non-spoiling feedback.** On a correct answer the choice turns green and an explanation
+  pops in beneath the question; on a wrong answer the choice turns red with a
+  **non-revealing hint** and an unlimited, unpenalized retry — all without re-rendering
+  the card. The **Teach me this** tutor (`/api/tutor`) explains the underlying concept
+  from the source material under a prompt guardrail that forbids naming the answer.
+- **LLM for language, code for logic.** Grading, routing, progression, and summary
+  **stats** are deterministic TS; the model only writes the plan, questions, hints,
+  and the summary *narrative* — all schema-validated with zod via `withStructuredOutput`.
+- **Answer-key audit.** Generated questions pass a second, temperature-0 pass that
+  independently solves each item and **drops** any whose stored key it disputes — catching
+  the classic failure where the explanation argues for one choice but the key names another.
+- **Grounding.** Every MCQ must include a `sourceQuote` from the document, which makes
+  "MCQs generated directly from PDF content" verifiable per question.
+
+---
+
+## Acceptance criteria mapping
+
+| Criterion | Where |
+|---|---|
+| Accepts a PDF upload and parses content | `web/src/app/api/upload/route.ts` (`unpdf`, Node runtime) |
+| Presents a plan (todo list) | `plan` node → `LessonPlanCard` objectives checklist |
+| HITL interrupt to review plan before proceeding | `approval` node `interrupt()` + `useLangGraphInterrupt` |
+| MCQs generated directly from the PDF | `generate_mcqs` node, grounded prompt + required `sourceQuote` + answer-key audit |
+| MCQ widget with radio selection | `web/src/components/McqWidget.tsx` |
+| Correct → explanation shown | `/api/grade` returns `explanation`; green banner in the widget |
+| Incorrect → hint + retry without penalty | `/api/grade` returns `hint`; red state, radios re-enabled, retries uncapped |
+| Proceed through all MCQs to completion | index advancement + per-objective regeneration (`routeAfterQuiz`) |
+| Summary of results + study tips | `summarize` node → `SummaryReport` |
+
+---
+
+## Project layout
+
+```
+pdf-lesson-agent/
+├── docker-compose.yml          # postgres:16 (optional)
+├── .env.example
+├── samples/
+│   ├── photosynthesis.pdf      # demo document
+│   └── make-sample.mjs         # regenerates it (no deps)
+├── agent/                      # LangGraph.js agent
+│   ├── langgraph.json          # graph registration
+│   └── src/
+│       ├── graph.ts            # StateGraph + routing table
+│       ├── state.ts            # Annotation.Root state + narrow output schema
+│       ├── schemas.ts          # zod contracts (single source of truth)
+│       ├── prompts.ts          # centralized prompts
+│       ├── model.ts            # provider-agnostic model factory + SILENT config
+│       ├── stats.ts            # deterministic summary stats
+│       ├── db.ts               # Postgres attempts ledger (best-effort)
+│       └── nodes/              # plan, approval, generateMcqs, quizLoop, summarize
+└── web/                        # Next.js + CopilotKit
+    └── src/
+        ├── app/
+        │   ├── api/copilotkit/route.ts   # CopilotRuntime → LangGraphAgent
+        │   ├── api/upload/route.ts       # PDF → text (unpdf)
+        │   ├── api/seed/route.ts         # seed document into thread state
+        │   ├── api/grade/route.ts        # server-authoritative grading
+        │   ├── api/tutor/route.ts        # Socratic hint / "teach me this"
+        │   └── layout.tsx / page.tsx
+        ├── components/          # Providers, PdfDropzone, LessonPlanCard,
+        │                        # McqWidget, ProgressBar, SummaryReport, ui
+        └── lib/                 # langgraph.ts (thread helpers), types.ts
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Agent server won't start: `ENOENT ... .env` | Create it: `cp .env.example .env`. `langgraph.json` references `../.env`. |
+| Chat sends but nothing happens | The agent id must match in three places: `LANGGRAPH_AGENT_ID`, the `agent` prop in `Providers.tsx`, and the graph key in `agent/langgraph.json` (all `lesson_agent`). |
+| `interrupt` never surfaces a widget | Ensure the agent server is running on `LANGGRAPH_URL` and the interrupt hook is mounted (it is, in `page.tsx`). |
+| LLM errors / 401 | Set a real `OPENAI_API_KEY` (or `MODEL_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`). |
+| "No extractable text" on upload | The PDF is scanned/image-only; OCR is out of scope. Try `samples/photosynthesis.pdf`. |
+| Want a fresh lesson | Click **New lesson** (clears the persisted thread id) or clear `localStorage`. |
+| `LangGraphAgent` import error | It's imported from `@copilotkit/runtime/langgraph` (the non-deprecated path). |
+
+---
+
+## Known limitations & future work
+
+- **Score integrity is client-trustful (single-user demo scope).** Grading runs
+  through `/api/grade` for instant, reload-free feedback, and the stats ledger is
+  reconstructed from the client's reported `wrongAttempts`/`hintKinds` on resolve.
+  The route only grades the *current* question (no pre-solving ahead), but a
+  determined user with devtools could still probe choices or under-report attempts
+  — and the local LangGraph dev server on `:8123` is itself unauthenticated, so
+  the raw answer key is reachable in dev. For a real deployment: put auth on the
+  LangGraph server, and have the grade route persist a server-side per-question
+  attempt counter that the agent reconciles against on resolve. The answer key is
+  correctly kept off the CopilotKit **state-sync** channel (narrow output schema)
+  and out of the interrupt payload; this caveat is specifically about the
+  unauthenticated local grading endpoint.
+- **Long PDFs are truncated** to ~40k chars (front-of-document bias). Planned fix:
+  map-reduce summarization for planning + per-objective retrieval (RAG).
+- **No OCR** — scanned/image PDFs are rejected with a clear message.
+- **Single-user, no auth** — thread isolation is by `threadId` only.
+- **Question quality** is prompt-enforced, not empirically calibrated. The attempts
+  ledger is designed to feed difficulty calibration / IRT later.
+- **Stretch ideas:** adaptive difficulty (2 correct → harder), review flashcards for
+  weak objectives, streaming plan generation, exportable summary PDF.
