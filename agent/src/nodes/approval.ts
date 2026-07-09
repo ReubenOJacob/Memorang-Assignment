@@ -15,21 +15,47 @@ type ApprovalResume =
   | { action: "approve" }
   | { action: "revise"; feedback: string };
 
+/**
+ * Approval is NEVER the fallback. The resume normally arrives as the parsed
+ * {action} object from LessonPlanCard, but a typed chat message can also
+ * resolve a pending interrupt (same hazard normalizeResume guards in the quiz
+ * node) — that text is treated as revision feedback, not as an approval.
+ */
+function normalizeApproval(raw: unknown): ApprovalResume {
+  let v: unknown = raw;
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      /* plain text — falls through to the revise-with-feedback default */
+    }
+  }
+  if (v && typeof v === "object") {
+    const r = v as Record<string, unknown>;
+    if (r.action === "approve") return { action: "approve" };
+    if (r.action === "revise") {
+      return { action: "revise", feedback: typeof r.feedback === "string" ? r.feedback : "" };
+    }
+  }
+  return { action: "revise", feedback: typeof raw === "string" ? raw : "" };
+}
+
 export async function approvalNode(state: LessonStateType): Promise<LessonStateUpdate> {
-  const decision = interrupt({
-    type: "plan_approval",
-    plan: state.lessonPlan,
-  }) as ApprovalResume;
+  const decision = normalizeApproval(
+    interrupt({
+      type: "plan_approval",
+      plan: state.lessonPlan,
+    }),
+  );
 
   if (decision.action === "revise") {
     return {
       planApproved: false,
-      planFeedback: decision.feedback ?? "",
+      planFeedback: decision.feedback,
       phase: "planning",
     };
   }
 
-  // approve
   return {
     planApproved: true,
     phase: "quizzing",

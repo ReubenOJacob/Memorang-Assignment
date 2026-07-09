@@ -305,14 +305,15 @@ export default function Home() {
                 }}
               />
               {/* Quiz focus mode hides the chat transcript; between interrupts
-                  (next objective's questions are being written) show a status
-                  card instead of an empty pane. Delayed so the brief gap
-                  between consecutive questions never flashes it. */}
+                  show a status card instead of an empty pane. The gap is either
+                  the next objective's questions being written or (after the
+                  final question) the summary — the copy covers both. Delayed so
+                  the brief gap between consecutive questions never flashes it. */}
               {phase === "quizzing" && !quizWidgetUp && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="animate-fade-up flex items-center gap-2.5 rounded-xl border border-line bg-surface p-4 text-sm text-mut [animation-delay:600ms]">
                     {Icon.book("animate-pulse-soft text-accent")}
-                    Writing your next questions from the document…
+                    Working on what&apos;s next…
                   </div>
                 </div>
               )}

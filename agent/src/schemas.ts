@@ -46,6 +46,9 @@ export const McqSchema = z.object({
   choices: z
     .array(z.object({ id: ChoiceIdSchema, text: z.string() }))
     .length(4)
+    .refine((cs) => new Set(cs.map((c) => c.id)).size === 4, {
+      message: "choice ids must be exactly A, B, C, D with no duplicates",
+    })
     .describe("exactly 4 choices A-D"),
   correctChoiceId: ChoiceIdSchema,
   explanation: z.string().describe("shown AFTER a correct answer; teaches why"),
