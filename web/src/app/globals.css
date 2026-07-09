@@ -150,16 +150,21 @@ input[type="radio"] {
   height: 100%;
 }
 
-/* Quiz focus mode — while a lesson is in the quizzing phase, the chat pane
- * shows ONLY the question widget: transcript bubbles (kickoff message, initial
- * label, generation notices) and the free-text input are hidden. The widget
- * survives because CopilotKit renders interrupts as a sibling of the message
- * list, not inside .copilotKitMessage. Hint / "Teach me this" cover mid-quiz
- * help, so hiding the input loses nothing (replies would be invisible anyway).
- */
-.quiz-focus .copilotKitMessage {
+/* The free-text chat input is removed entirely. There is no free-form Q&A
+ * handler behind it: the whole lesson is driven by the plan/MCQ card buttons
+ * and a programmatic kickoff message, and typing into it during an interrupt
+ * could resolve that interrupt with unstructured text. Hint / "Teach me this"
+ * cover in-lesson help. The "Powered by CopilotKit" footer goes with it. */
+.copilotKitInputContainer,
+.poweredBy {
   display: none;
 }
-.quiz-focus .copilotKitInputContainer {
+
+/* Quiz focus mode — during the quizzing phase the chat pane shows ONLY the
+ * question widget: the transcript bubbles (kickoff message, initial label,
+ * generation notices) are hidden. The widget survives because CopilotKit
+ * renders interrupts as a sibling of the message list, not inside
+ * .copilotKitMessage. */
+.quiz-focus .copilotKitMessage {
   display: none;
 }

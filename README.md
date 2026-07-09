@@ -135,7 +135,7 @@ open http://localhost:3000
 |---|---|---|
 | `MODEL_PROVIDER` | `openai` | `openai` or `anthropic` |
 | `OPENAI_API_KEY` | — | required when provider is openai (default) |
-| `OPENAI_MODEL` | `gpt-4o` | model id |
+| `OPENAI_MODEL` | `gpt-5.1` | model id (GPT-5/o-series reasoning models auto-skip `temperature`) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | — / `claude-sonnet-5` | used when provider is anthropic |
 | `USE_MEMORY_SAVER` | `true` | `true` = no Docker (in-memory); `false` = use Postgres |
 | `DATABASE_URL` | `postgresql://lesson:lesson@localhost:5432/lesson` | attempts ledger (when not in memory mode) |
@@ -189,9 +189,10 @@ Trade-off: durability across **server restarts** requires Postgres
 - **LLM for language, code for logic.** Grading, routing, progression, and summary
   **stats** are deterministic TS; the model only writes the plan, questions, hints,
   and the summary *narrative* — all schema-validated with zod via `withStructuredOutput`.
-- **Answer-key audit.** Generated questions pass a second, temperature-0 pass that
-  independently solves each item and **drops** any whose stored key it disputes — catching
-  the classic failure where the explanation argues for one choice but the key names another.
+- **Answer-key audit.** Generated questions pass a second, independent solve-and-compare
+  pass that re-derives each answer and **drops** any question whose stored key it disputes —
+  catching the classic failure where the explanation argues for one choice but the key
+  names another.
 - **Grounding.** Every MCQ must include a `sourceQuote` from the document, which makes
   "MCQs generated directly from PDF content" verifiable per question.
 

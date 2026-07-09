@@ -301,7 +301,6 @@ export default function Home() {
                   title: "Your tutor",
                   initial:
                     "I'm reading your document and will propose a lesson plan for your approval.",
-                  placeholder: "Ask about the material anytime…",
                 }}
               />
               {/* Quiz focus mode hides the chat transcript; between interrupts

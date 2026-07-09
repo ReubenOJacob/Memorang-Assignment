@@ -67,6 +67,9 @@ async function callLlm(prompt: string): Promise<string> {
     const data = await res.json();
     return data.content?.[0]?.text ?? "";
   }
+  const openaiModel = process.env.OPENAI_MODEL ?? "gpt-5.1";
+  // GPT-5-family / o-series reasoning models reject `temperature` (400).
+  const supportsTemperature = !/^(gpt-5|o\d)/.test(openaiModel);
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -74,8 +77,8 @@ async function callLlm(prompt: string): Promise<string> {
       authorization: `Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
-      temperature: 0.5,
+      model: openaiModel,
+      ...(supportsTemperature ? { temperature: 0.5 } : {}),
       messages: [{ role: "user", content: prompt }],
     }),
   });

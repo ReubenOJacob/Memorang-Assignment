@@ -43,9 +43,13 @@ export function getModel(opts: { temperature?: number } = {}): BaseChatModel {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not set. Add it to .env (or set MODEL_PROVIDER=anthropic).");
   }
+  const openaiModel = process.env.OPENAI_MODEL ?? "gpt-5.1";
+  // GPT-5-family / o-series are reasoning models: they REJECT `temperature`
+  // (400 Unsupported parameter). Only sampling models (gpt-4o etc.) accept it.
+  const supportsTemperature = !/^(gpt-5|o\d)/.test(openaiModel);
   return new ChatOpenAI({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o",
-    temperature,
+    model: openaiModel,
+    ...(supportsTemperature ? { temperature } : {}),
     apiKey: process.env.OPENAI_API_KEY,
     timeout,
     maxRetries,
