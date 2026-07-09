@@ -3,7 +3,7 @@
 import { useCoAgent, useCopilotChat, useLangGraphInterrupt } from "@copilotkit/react-core";
 import { TextMessage, MessageRole } from "@copilotkit/runtime-client-gql";
 import { CopilotChat } from "@copilotkit/react-ui";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PdfDropzone, type UploadResult } from "@/components/PdfDropzone";
 import { LessonPlanCard } from "@/components/LessonPlanCard";
 import { McqWidget } from "@/components/McqWidget";
@@ -21,6 +21,25 @@ const STEPS = [
   { n: 3, label: "Quiz through it, get a report" },
 ];
 
+/**
+ * Reports whether an interrupt widget is currently mounted (the render function
+ * of useLangGraphInterrupt has no other mount signal). Used to show a
+ * "preparing questions" indicator in the gaps between quiz interrupts.
+ */
+function InterruptMount({
+  onChange,
+  children,
+}: {
+  onChange: (up: boolean) => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    onChange(true);
+    return () => onChange(false);
+  }, [onChange]);
+  return <>{children}</>;
+}
+
 export default function Home() {
   const [started, setStarted] = useState(false);
   const [truncatedNote, setTruncatedNote] = useState(false);
@@ -30,6 +49,9 @@ export default function Home() {
   const { threadId, newThread } = useThread();
   const [kickoffError, setKickoffError] = useState<string | null>(null);
   const [pendingKickoff, setPendingKickoff] = useState<{ threadId: string; title: string } | null>(null);
+  // True while a quiz-question widget is on screen — drives quiz focus mode.
+  const [quizWidgetUp, setQuizWidgetUp] = useState(false);
+  const onQuizWidgetMount = useCallback((up: boolean) => setQuizWidgetUp(up), []);
 
   // After a refresh mid-lesson, the synced agent state still has the lesson —
   // restore the lesson view instead of offering the upload hero (uploading a
@@ -59,7 +81,11 @@ export default function Home() {
         );
       }
       if (value.type === "quiz_question") {
-        return <McqWidget event={value} resolve={resolve} />;
+        return (
+          <InterruptMount onChange={onQuizWidgetMount}>
+            <McqWidget event={value} resolve={resolve} />
+          </InterruptMount>
+        );
       }
       return <></>;
     },
@@ -264,7 +290,11 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div className="min-h-[70vh] overflow-hidden rounded-xl border border-line bg-surface">
+            <div
+              className={`relative min-h-[70vh] overflow-hidden rounded-xl border border-line bg-surface ${
+                phase === "quizzing" ? "quiz-focus" : ""
+              }`}
+            >
               <CopilotChat
                 className="h-full"
                 labels={{
@@ -274,6 +304,18 @@ export default function Home() {
                   placeholder: "Ask about the material anytime…",
                 }}
               />
+              {/* Quiz focus mode hides the chat transcript; between interrupts
+                  (next objective's questions are being written) show a status
+                  card instead of an empty pane. Delayed so the brief gap
+                  between consecutive questions never flashes it. */}
+              {phase === "quizzing" && !quizWidgetUp && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="animate-fade-up flex items-center gap-2.5 rounded-xl border border-line bg-surface p-4 text-sm text-mut [animation-delay:600ms]">
+                    {Icon.book("animate-pulse-soft text-accent")}
+                    Writing your next questions from the document…
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </section>

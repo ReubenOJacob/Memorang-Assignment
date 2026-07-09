@@ -85,7 +85,10 @@ Two processes in development:
 3. **Approve (HITL)** — the graph **interrupts** and shows you the plan. You **Approve
    & Start** or **Request changes** (which regenerates the plan with your feedback).
 4. **Quiz loop** — for each objective the `generate_mcqs` node writes 2–3 grounded
-   MCQs. Each question is its own **interrupt**:
+   MCQs. Each question is its own **interrupt**. The UI enters a **focus mode** for the
+   duration of the quiz — the chat transcript and free-text input are hidden so only the
+   question widget is on screen, with a "writing your next questions…" indicator filling
+   the gap while the next objective's batch is generated.
    - **Correct** → the choice/panel turns **green**, an explanation appears, next question.
    - **Incorrect** → **red** highlight + a **non-revealing hint**, retry with no penalty.
    - **💡 Hint** / **📚 Teach me this** → a Socratic tutor teaches the concept from the
